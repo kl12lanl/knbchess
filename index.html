@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Быстрый Шахматный ИИ</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #202225; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; user-select: none; }
+        h1 { margin: 5px; color: #4caf50; }
+        .status-container { font-size: 1.2rem; min-height: 35px; margin-bottom: 10px; }
+        #board-wrapper { width: 400px; max-width: 90vw; }
+        .chess-board { display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); aspect-ratio: 1; border: 4px solid #333; box-shadow: 0 8px 24px rgba(0,0,0,0.6); }
+        .square { display: flex; align-items: center; justify-content: center; font-size: 2.5rem; cursor: pointer; }
+        .white-sq { background-color: #f0d9b5; color: #000; }
+        .black-sq { background-color: #b58863; color: #000; }
+        .square.selected { background-color: #7ab873 !important; }
+        .square.highlight { background-color: #aad754 !important; }
+        .square.highlight:empty::before { content: ''; width: 12px; height: 12px; background: rgba(0,0,0,0.15); border-radius: 50%; }
+        button { margin-top: 15px; padding: 10px 20px; font-size: 1rem; background: #4caf50; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Умный и Быстрый ИИ</h1>
+    <div class="status-container" id="status">Ваш ход (Белые)</div>
+    <div id="board-wrapper"><div id="chess-board" class="chess-board"></div></div>
+    <button id="resetBtn">Начать заново</button>
+    <script>
+        const INIT_BD = [['r','n','b','q','k','b','n','r'],['p','p','p','p','p','p','p','p'],['.','.','.','.','.','.','.','.'],['.','.','.','.','.','.','.','.'],['.','.','.','.','.','.','.','.'],['.','.','.','.','.','.','.','.'],['P','P','P','P','P','P','P','P'],['R','N','B','Q','K','B','N','R']];
+        const SYMBOLS = {'P':'♙','N':'♘','B':'♗','R':'♖','Q':'♕','K':'♔','p':'♟','n':'♞','b':'♝','r':'♜','q':'♛','k':'♚','.':''};
+        const VALUES = {'P':100,'N':320,'B':330,'R':500,'Q':900,'K':20000,'p':-100,'n':-320,'b':-330,'r':-500,'q':-900,'k':-20000,'.':0};
+        
+        const PAWN_TABLE = [[0,0,0,0,0,0,0,0],[50,50,50,50,50,50,50,50],[10,10,20,30,30,20,10,10],[5,5,10,25,25,10,5,5],[0,0,0,20,20,0,0,0],[5,-5,-10,0,0,-10,-5,5],[5,10,10,-20,-20,10,10,5],[0,0,0,0,0,0,0,0]];
+        const KNIGHT_TABLE = [[-50,-40,-30,-30,-30,-30,-40,-50],[-40,-20,0,0,0,0,-20,-40],[-30,0,10,15,15,10,0,-30],[-30,5,15,20,20,15,5,-30],[-30,0,15,20,20,15,0,-30],[-30,5,10,15,15,10,5,-30],[-40,-20,0,5,5,0,-20,-40],[-50,-40,-30,-30,-30,-30,-40,-50]];
+
+        let bd = JSON.parse(JSON.stringify(INIT_BD)), turn = 'w', selSq = null;
+        const bEl = document.getElementById('chess-board'), sEl = document.getElementById('status');
+        
+        function draw() {
+            bEl.innerHTML = '';
+            for(let r=0; r<8; r++) {
+                for(let c=0; c<8; c++) {
+                    const sq = document.createElement('div');
+                    sq.className = `square ${(r+c)%2===0?'white-sq':'black-sq'}`;
+                    sq.dataset.r = r; sq.dataset.c = c;
+                    sq.textContent = SYMBOLS[bd[r][c]];
+                    sq.addEventListener('click', onClick);
+                    bEl.appendChild(sq);
+                }
+            }
+        }
+        function onClick() {
+            if (turn === 'b') return;
+            const r = parseInt(this.dataset.r), c = parseInt(this.dataset.c), p = bd[r][c];
+            if (selSq) {
+                if (valid(selSq.r, selSq.c, r, c, bd)) {
+                    move(selSq.r, selSq.c, r, c); selSq = null; clear();
+                    if (!checkOver()) { sEl.innerHTML = 'ИИ думает...'; setTimeout(ai, 10); }
+                    return;
+                }
+            }
+            if (p !== '.' && p === p.toUpperCase()) { clear(); selSq = {r, c}; this.classList.add('selected'); highlight(r, c); }
+            else { selSq = null; clear(); }
+        }
+        function clear() { document.querySelectorAll('.square').forEach(s => s.classList.remove('selected', 'highlight')); }
+        function highlight(fr, fc) { document.querySelectorAll('.square').forEach(s => { if(valid(fr, fc, parseInt(s.dataset.r), parseInt(s.dataset.c), bd)) s.classList.add('highlight'); }); }
+        function valid(fr, fc, tr, tc, b) {
+            if (fr === tr && fc === tc) return false;
+            const p = b[fr][fc], t = b[tr][tc];
+            if (t !== '.' && ((p===p.toUpperCase() && t===t.toUpperCase()) || (p===p.toLowerCase() && t===t.toLowerCase()))) return false;
+            const dr = tr - fr, dc = tc - fc, ar = Math.abs(dr), ac = Math.abs(dc);
+            if (p.toUpperCase() === 'P') {
+                const d = p === 'P' ? -1 : 1;
+                if (dc === 0 && t === '.') { if (dr === d) return true; if (fr === (p==='P'?6:1) && dr === 2*d && b[fr+d][fc] === '.') return true; }
+                return (ac === 1 && dr === d && t !== '.');
+            }
+            if (p.toUpperCase() === 'N') return (ar === 2 && ac === 1) || (ar === 1 && ac === 2);
+            if (p.toUpperCase() === 'K') return ar <= 1 && ac <= 1;
+            let lin = (p.toUpperCase()==='R' && (dr===0||dc===0)) || (p.toUpperCase()==='B' && ar===ac) || (p.toUpperCase()==='Q' && (dr===0||dc===0||ar===ac));
+            if (lin) {
+                const sr = dr===0?0:dr/ar, sc = dc===0?0:dc/ac;
+                let cr = fr+sr, cc = fc+sc;
+                while(cr!==tr || cc!==tc) { if(b[cr][cc]!=='.') return false; cr+=sr; cc+=sc; }
+                return true;
+            }
+            return false;
+        }
+        function moves(b, color) {
+            let m =;
+            for(let r=0; r<8; r++) {
+                for(let c=0; c<8; c++) {
+                    if(b[r][c]==='.' || (color==='w' && b[r][c]!==b[r][c].toUpperCase()) || (color==='b' && b[r][c]!==b[r][c].toLowerCase())) continue;
+                    for(let tr=0; tr<8; tr++) { for(let tc=0; tc<8; tc++) { if(valid(r,c,tr,tc,b)) m.push({fr:r, fc:c, tr, tc, t:b[tr][tc]}); } }
+                }
+            }
+            // Сортировка ходов: сначала просчитываем самые опасные (взятия). Это ускоряет Альфа-Бета отсечение в 10 раз!
+            return m.sort((a, b) => (b.t !== '.' ? 1 : 0) - (a.t !== '.' ? 1 : 0));
+        }
+        function move(fr, fc, tr, tc) {
+            let p = bd[fr][fc];
+            if(p==='P' && tr===0) p='Q'; if(p==='p' && tr===7) p='q';
+            bd[tr][tc] = p; bd[fr][fc] = '.';
+            turn = turn === 'w' ? 'b' : 'w'; draw(); checkOver();
+        }
+        function evalB(b) { 
+            let s = 0; 
+            for(let r=0; r<8; r++) {
+                for(let c=0; c<8; c++) {
+                    let p = b[r][c]; s += VALUES[p]; 
+                    if (p === 'p') s -= PAWN_TABLE[r][c]; if (p === 'P') s += PAWN_TABLE[7-r][c];
+                    if (p === 'n') s -= KNIGHT_TABLE[r][c]; if (p === 'N') s += KNIGHT_TABLE[7-r][c];
+                }
+            }
+            return s; 
+        }
+        function ab(b, d, a, bt, maxing) {
+            if(d===0) return evalB(b);
+            const list = moves(b, maxing?'w':'b'); if(list.length===0) return maxing?-99999:99999;
+            if(maxing) {
+                let mx = -Infinity;
+                for(let m of list) {
+                    let tg=b[m.tr][m.tc]; b[m.tr][m.tc]=b[m.fr][m.fc]; b[m.fr][m.fc]='.';
+                    let e=ab(b, d-1, a, bt, false);
+                    b[m.fr][m.fc]=b[m.tr][m.tc]; b[m.tr][m.tc]=tg;
+                    mx=Math.max(mx,e); a=Math.max(a,e); if(bt<=a) break; // Альфа-отсечение
+                }
+                return mx;
+            } else {
+                let mn = Infinity;
+                for(let m of list) {
+                    let tg=b[m.tr][m.tc]; b[m.tr][m.tc]=b[m.fr][m.fc]; b[m.fr][m.fc]='.';
+                    let e=ab(b, d-1, a, bt, true);
+                    b[m.fr][m.fc]=b[m.tr][m.tc]; b[m.tr][m.tc]=tg;
+                    mn=Math.min(mn,e); bt=Math.min(bt,e); if(bt<=a) break; // Бета-отсечение
+                }
+                return mn;
+            }
+        }
+        function ai() {
+            const list = moves(bd, 'b'); if(list.length===0) return;
+            let bm=null, bv=Infinity;
+            // Оптимизированный предпросчет ходов
+            for(let m of list) {
+                let tg=bd[m.tr][m.tc]; bd[m.tr][m.tc]=bd[m.fr][m.fc]; bd[m.fr][m.fc]='.';
+                let v=ab(bd, 2, -Infinity, Infinity, true);
+                bd[m.fr][m.fc]=bd[m.tr][m.tc]; bd[m.tr][m.tc]=tg;
+                if(v<bv) { bv=v; bm=m; }
+            }
+            if(bm) move(bm.fr, bm.fc, bm.tr, bm.tc);
+        }
+        function checkOver() {
+            let w=false, b=false; for(let r=0;r<8;r++)for(let c=0;c<8;c++) { if(bd[r][c]==='K') w=true; if(bd[r][c]==='k') b=true; }
+            if(!w) { sEl.innerHTML = 'ИИ победил!'; turn='b'; return true; }
+            if(!b) { sEl.innerHTML = 'Вы победили!'; turn='b'; return true; }
+            sEl.innerHTML = turn==='w' ? 'Ваш ход (Белые)' : 'Ход ИИ...'; return false;
+        }
+        document.getElementById('resetBtn').addEventListener('click', () => { bd=JSON.parse(JSON.stringify(INIT_BD)); turn='w'; selSq=null; draw(); sEl.innerHTML='Ваш ход (Белые)'; });
+        draw();
+    </script>
+</body>
+</html>
